@@ -1,23 +1,160 @@
-From 988093e37b2ec7e0215609bce5445569a1a33612 Mon Sep 17 00:00:00 2001
-From: Joe Ferrer <joe@theforage.com>
-Date: Wed, 1 Mar 2023 01:05:18 +1100
-Subject: [PATCH] Move python files to datafeed dir
+From f2aa56e4aaecb10be09df3a344f6dfe002ed1b12 Mon Sep 17 00:00:00 2001
+From: gowtham <gowthamv0210@gmail.com>
+Date: Wed, 26 Jun 2024 21:55:45 +0530
+Subject: [PATCH] Fix patches
 
 ---
- requirements.txt => datafeed/requirements.txt | 0
- server.py => datafeed/server3.py              | 0
- 2 files changed, 0 insertions(+), 0 deletions(-)
- rename requirements.txt => datafeed/requirements.txt (100%)
- rename server.py => datafeed/server3.py (100%)
+ datafeed/requirements.txt |  2 +-
+ multi_commit.patch        | 23 +++++++++++++++++++++++
+ src/DataManipulator.ts    | 35 ++++++++++++++++++++++++++---------
+ src/Graph.tsx             | 27 ++++++++++++++++++---------
+ 4 files changed, 68 insertions(+), 19 deletions(-)
+ create mode 100644 multi_commit.patch
 
-diff --git a/requirements.txt b/datafeed/requirements.txt
-similarity index 100%
-rename from requirements.txt
-rename to datafeed/requirements.txt
-diff --git a/server.py b/datafeed/server3.py
-similarity index 100%
-rename from server.py
-rename to datafeed/server3.py
+diff --git a/datafeed/requirements.txt b/datafeed/requirements.txt
+index f678e82..5a3f808 100644
+--- a/datafeed/requirements.txt
++++ b/datafeed/requirements.txt
+@@ -1 +1 @@
+-python-dateutil==2.8.2
+\ No newline at end of file
++eutilpython-dateutil==2.8.2
+\ No newline at end of file
+diff --git a/multi_commit.patch b/multi_commit.patch
+new file mode 100644
+index 0000000..ccf76c2
+--- /dev/null
++++ b/multi_commit.patch
+@@ -0,0 +1,23 @@
++From 988093e37b2ec7e0215609bce5445569a1a33612 Mon Sep 17 00:00:00 2001
++From: Joe Ferrer <joe@theforage.com>
++Date: Wed, 1 Mar 2023 01:05:18 +1100
++Subject: [PATCH] Move python files to datafeed dir
++
++---
++ requirements.txt => datafeed/requirements.txt | 0
++ server.py => datafeed/server3.py              | 0
++ 2 files changed, 0 insertions(+), 0 deletions(-)
++ rename requirements.txt => datafeed/requirements.txt (100%)
++ rename server.py => datafeed/server3.py (100%)
++
++diff --git a/requirements.txt b/datafeed/requirements.txt
++similarity index 100%
++rename from requirements.txt
++rename to datafeed/requirements.txt
++diff --git a/server.py b/datafeed/server3.py
++similarity index 100%
++rename from server.py
++rename to datafeed/server3.py
++-- 
++2.41.0.windows.2
++
+diff --git a/src/DataManipulator.ts b/src/DataManipulator.ts
+index 7f62295..db68789 100644
+--- a/src/DataManipulator.ts
++++ b/src/DataManipulator.ts
+@@ -1,20 +1,37 @@
+ import { ServerRespond } from './DataStreamer';
+ 
+ export interface Row {
+-  stock: string,
+-  top_ask_price: number,
++  price_abc: number,
++  price_def: number,
++  upperbound: number,
++  lowerbound: number,
++  alert: number | undefined
++  ratio: number,
+   timestamp: Date,
+ }
+ 
+ 
+ export class DataManipulator {
+-  static generateRow(serverResponds: ServerRespond[]) {
+-    return serverResponds.map((el: any) => {
++ static generateRow(serverRespond: ServerRespond[]): Row {
++  //Calculating price_abc, price_def, upperbound, lowerbound, ratio
++  //upperbound and lowerbound will be +- 5 percent, since doing ratio, 1 is 100 percent
++     const price_abc = (serverRespond[0].top_ask.price + serverRespond[0].top_bid.price)/2;
++     const price_def = (serverRespond[1].top_ask.price + serverRespond[1].top_bid.price)/2;
++     const upperbound = 1 + 0.05;
++     const lowerbound = 1 - 0.05;
++     const ratio = price_abc/price_def;
+       return {
+-        stock: el.stock,
+-        top_ask_price: el.top_ask && el.top_ask.price || 0,
+-        timestamp: el.timestamp,
++        price_abc,
++       price_def,
++        ratio,
++        upperbound,
++       lowerbound,
++        //Ternary Operator to have timestamp be more recent
++        timestamp: serverRespond[0].timestamp > serverRespond[1].timestamp ?
++        serverRespond[0].timestamp : serverRespond[1].timestamp,
++        //Ternary Operator to have alert be set
++        alert: (ratio > upperbound || ratio < lowerbound)? ratio : undefined,
+       };
+-    })
+   }
+-}
++  }
++
+diff --git a/src/Graph.tsx b/src/Graph.tsx
+index 277797d..9b1270e 100644
+--- a/src/Graph.tsx
++++ b/src/Graph.tsx
+@@ -23,10 +23,14 @@ class Graph extends Component<IProps, {}> {
+     const elem = document.getElementsByTagName('perspective-viewer')[0] as unknown as PerspectiveViewerElement;
+ 
+     const schema = {
+-      stock: 'string',
+-      top_ask_price: 'float',
+-      top_bid_price: 'float',
++
+       timestamp: 'date',
++      ratio: 'float',
++      upperbound: 'float',
++      lowerbound: 'float',
++      price_abc: 'float',
++      price_def: 'float',
++      alert: 'float',
+     };
+ 
+     if (window.perspective && window.perspective.worker()) {
+@@ -36,13 +40,16 @@ class Graph extends Component<IProps, {}> {
+       // Load the `table` in the `<perspective-viewer>` DOM reference.
+       elem.load(this.table);
+       elem.setAttribute('view', 'y_line');
+-      elem.setAttribute('column-pivots', '["stock"]');
++
+       elem.setAttribute('row-pivots', '["timestamp"]');
+-      elem.setAttribute('columns', '["top_ask_price"]');
++      elem.setAttribute('columns', '["upperbound","ratio", "lowerbound", "alert"]');
+       elem.setAttribute('aggregates', JSON.stringify({
+-        stock: 'distinctcount',
+-        top_ask_price: 'avg',
+-        top_bid_price: 'avg',
++        lowerbound: 'avg',
++        upperbound: 'avg',
++        price_abc: 'avg',
++        price_def: 'avg',
++        ratio: 'avg',
++        alert: 'avg',
+         timestamp: 'distinct count',
+       }));
+     }
+@@ -51,7 +58,9 @@ class Graph extends Component<IProps, {}> {
+   componentDidUpdate() {
+     if (this.table) {
+       this.table.update(
+-        DataManipulator.generateRow(this.props.data),
++       [
++         DataManipulator.generateRow(this.props.data),
++        ] as unknown as 'TableData'
+       );
+     }
+   }
 -- 
 2.41.0.windows.2
 
